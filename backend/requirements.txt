@@ -1,0 +1,25 @@
+# --- Web & API Framework ---
+fastapi==0.111.0
+uvicorn==0.29.0
+python-dotenv==1.0.1
+pydantic==2.7.1
+requests==2.31.0
+
+# --- Database Integration ---
+supabase==2.5.0
+
+# --- Machine Learning & Data Processing ---
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+xgboost==2.0.3
+
+# --- Computer Vision & Deep Learning ---
+ultralytics==8.2.11  # YOLOv8
+torch==2.3.0         # Deep learning backbone for ResNet & YOLO
+torchvision==0.18.0
+opencv-python==4.9.0.80
+pillow==10.3.0
+
+# --- LLM Integration (Google Gemini) ---
+google-generativeai==0.5.2

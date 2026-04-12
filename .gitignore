@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+
+# Node/React
+node_modules/
+dist/
+.env.local
+
+# Machine Learning Checkpoints & Massive Datasets
+backend/models/*.pth
+backend/models/*.pt
+backend/models/*.bin
+backend/models/*.pkl
+datasets/
+backend/yolo_runs/
+
+# IDE / System
+.idea/
+.vscode/
+.DS_Store
