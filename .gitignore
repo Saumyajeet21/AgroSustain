@@ -1,24 +1,119 @@
-# Python
+# =============================================================
+#  AgroSustain – .gitignore
+# =============================================================
+
+# ──────────────────────────────────────────────
+# SECRETS & ENVIRONMENT VARIABLES  ← NEVER COMMIT
+# ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example          # allow the example template
+
+# ──────────────────────────────────────────────
+# PYTHON
+# ──────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+MANIFEST
+
+# Virtual environments
 venv/
 env/
-.env
+.venv/
+.env/
+ENV/
+env.bak/
+venv.bak/
 
-# Node/React
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ──────────────────────────────────────────────
+# NODE / REACT / VITE
+# ──────────────────────────────────────────────
 node_modules/
-dist/
-.env.local
+frontend/dist/
+frontend/build/
+.npm
+.yarn/cache
+.pnp.*
+*.tsbuildinfo
 
-# Machine Learning Checkpoints & Massive Datasets
+# ──────────────────────────────────────────────
+# MACHINE LEARNING – LARGE BINARY FILES
+# ──────────────────────────────────────────────
+# Trained model weights (can be 100 MB+)
 backend/models/*.pth
 backend/models/*.pt
 backend/models/*.bin
 backend/models/*.pkl
+backend/models/*.h5
+backend/models/*.ckpt
+backend/models/*.onnx
+
+# Keep the JSON class-maps that are tiny & needed
+!backend/models/*.json
+
+# Root-level YOLO pre-trained weights
+*.pt
+*.pth
+
+# Datasets (can be gigabytes)
 datasets/
+
+# YOLO training runs / artefacts
 backend/yolo_runs/
 
-# IDE / System
+# ──────────────────────────────────────────────
+# RUNTIME / TEMPORARY FILES
+# ──────────────────────────────────────────────
+# User-uploaded images (generated at runtime)
+backend/uploads/
+
+# Log files
+logs/
+*.log
+*.log.*
+
+# ──────────────────────────────────────────────
+# IDE / EDITOR
+# ──────────────────────────────────────────────
 .idea/
 .vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ──────────────────────────────────────────────
+# OS FILES
+# ──────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+Desktop.ini

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # ── Load environment variables ───────────────────────────────────────────────
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
 # ── Internal module imports ──────────────────────────────────────────────────
 import sys
@@ -53,6 +53,40 @@ app.add_middleware(
 # ── Upload directory for disease images ───────────────────────────────────────
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# ── Gemini advice cache (plant+condition → advice text) ───────────────────────
+# Prevents redundant API calls for the same diagnosis (e.g. same disease seen twice).
+_GEMINI_ADVICE_CACHE: dict[str, str] = {}
+
+# ── Static healthy-plant responses (no API call needed) ───────────────────────
+_HEALTHY_TIPS = (
+    "Your plant looks healthy! 🌱 Here are 3 tips to keep it that way:\n"
+    "1. **Water consistently** — avoid both over- and under-watering; check soil moisture before watering.\n"
+    "2. **Monitor regularly** — inspect leaves weekly for early signs of spots, discolouration, or pests.\n"
+    "3. **Feed appropriately** — apply a balanced fertiliser once a month during the growing season."
+)
+
+# ── Pre-warm ML models at startup (avoids cold-load delay on first request) ───
+@app.on_event("startup")
+async def warmup_models():
+    import asyncio, threading
+    def _warmup():
+        try:
+            print("[Startup] Pre-warming YOLO leaf detector...")
+            from ml.leaf_detector import _ensure_loaded as yolo_load
+            yolo_load()
+            print("[Startup] YOLO ready.")
+        except Exception as e:
+            print(f"[Startup] YOLO warmup skipped: {e}")
+        try:
+            print("[Startup] Pre-warming ResNet50 disease classifier...")
+            from ml.disease_classifier import _ensure_loaded as resnet_load
+            resnet_load()
+            print("[Startup] ResNet50 ready.")
+        except Exception as e:
+            print(f"[Startup] ResNet50 warmup skipped: {e}")
+    thread = threading.Thread(target=_warmup, daemon=True)
+    thread.start()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -195,11 +229,9 @@ async def diagnose_disease(file: UploadFile = File(...)):
     Full two-stage vision pipeline:
     1. YOLO detects and crops leaf regions
     2. ResNet50 classifies each leaf for disease
-    3. Gemini generates natural language treatment advice
+    3. Gemini 2.5 Flash generates natural language treatment advice
     Returns annotated image + diagnosis + Gemini advice
     """
-    import google.generativeai as genai
-
     # Save uploaded image
     job_id    = str(uuid.uuid4())[:8]
     job_dir   = UPLOAD_DIR / job_id
@@ -233,32 +265,48 @@ async def diagnose_disease(file: UploadFile = File(...)):
     # ── Stage C: Gemini Treatment Advice ──────────────────────────────────────
     gemini_advice = ""
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-
         if primary["success"]:
             plant     = primary.get("plant",    "Unknown plant")
             condition = primary.get("condition","Unknown condition")
+            is_healthy = primary.get("is_healthy", False)
             conf      = primary.get("confidence", 0)
 
-            if primary.get("is_healthy"):
-                prompt = (
-                    f"The {plant} plant appears healthy (confidence: {conf:.0f}%). "
-                    "Give the farmer 3 brief tips to maintain this healthy condition. "
-                    "Keep it friendly, plain English, under 150 words."
-                )
-            else:
-                prompt = (
-                    f"A {plant} plant has been diagnosed with {condition} "
-                    f"(confidence: {conf:.0f}%). "
-                    "Give the farmer: 1) What this disease is in simple terms, "
-                    "2) Immediate actions to take, "
-                    "3) Recommended treatment or fungicide/pesticide. "
-                    "Be concise, practical, under 200 words."
-                )
+            # ── Healthy plants: use static response, no API call ──────────────
+            if is_healthy:
+                gemini_advice = _HEALTHY_TIPS
 
-            response = gemini_model.generate_content(prompt)
-            gemini_advice = response.text
+            else:
+                # ── Diseased plants: check cache first ────────────────────────
+                cache_key = f"{plant.lower()}::{condition.lower()}"
+                if cache_key in _GEMINI_ADVICE_CACHE:
+                    print(f"[Gemini Cache HIT] {cache_key}")
+                    gemini_advice = _GEMINI_ADVICE_CACHE[cache_key]
+                else:
+                    print(f"[Gemini Cache MISS] Calling API for: {cache_key}")
+                    from google import genai as genai_new
+                    client = genai_new.Client(api_key=os.getenv("GEMINI_API_KEY"))
+                    prompt = (
+                        f"A {plant} plant has been diagnosed with {condition} "
+                        f"(confidence: {conf:.0f}%). "
+                        "Give the farmer: 1) What this disease is, "
+                        "2) Immediate actions, "
+                        "3) Recommended treatment. "
+                        "Be concise, practical, under 150 words."
+                    )
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt,
+                        )
+                    except Exception as fallback_e:
+                        print(f"Gemini 2.5 Flash failed, falling back to gemini-flash-latest: {fallback_e}")
+                        response = client.models.generate_content(
+                            model="gemini-flash-latest",
+                            contents=prompt,
+                        )
+                    gemini_advice = response.text
+                    # Store in cache for future identical diagnoses
+                    _GEMINI_ADVICE_CACHE[cache_key] = gemini_advice
         else:
             gemini_advice = "Could not classify the plant. Please upload a clearer image of the leaf."
 
@@ -291,14 +339,23 @@ def get_annotated_image(job_id: str):
 @app.post("/api/chat", tags=["Chatbot"])
 async def chat_with_gemini(body: ChatRequest):
     """
-    Conversational AI chatbot powered by Google Gemini.
+    Conversational AI chatbot powered by Google Gemini 2.5 Flash.
     Maintains conversation history for multi-turn dialogue.
     Specialized as an agricultural advisor.
     """
-    import google.generativeai as genai
+    from google import genai as genai_new
+    from google.genai import types as genai_types
+
+    # ── Guard: reject trivially short or empty messages ───────────────────────
+    if not body.message or len(body.message.strip()) < 3:
+        return {
+            "success": False,
+            "reply": "Please enter a meaningful question so AgroBot can help you.",
+            "session_id": body.session_id,
+        }
 
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        client = genai_new.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
         system_instruction = (
             "You are AgroBot, an expert agricultural advisor for Indian farmers. "
@@ -310,14 +367,37 @@ async def chat_with_gemini(body: ChatRequest):
             "If a question is unrelated to agriculture, gently redirect to farming topics."
         )
 
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=system_instruction,
-        )
+        # Build contents list from history + new message
+        contents = []
+        for h in body.history:
+            role = h.get("role", "user")
+            if role == "assistant":
+                role = "model"
+            text = h.get("parts", [{}])[0].get("text", "") if h.get("parts") else ""
+            if text:
+                contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=text)]))
+        # Append the new user message
+        contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=body.message)]))
 
-        # Build conversation history for multi-turn support
-        chat = model.start_chat(history=body.history)
-        response = chat.send_message(body.message)
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    max_output_tokens=512,
+                ),
+            )
+        except Exception as fallback_e:
+            print(f"Gemini 2.5 Flash failed, falling back to gemini-flash-latest: {fallback_e}")
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    max_output_tokens=512,
+                ),
+            )
         reply = response.text
 
         # Log to Supabase

@@ -11,7 +11,7 @@ load_dotenv()
 # -- Test 1: Google Gemini ----------------------------------------------------
 print("\n[Gemini] Testing Google Gemini API...")
 key = os.getenv("GEMINI_API_KEY")
-url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
+url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
 payload = {"contents": [{"parts": [{"text": "Reply with exactly: AGROSUSTAIN OK"}]}]}
 try:
     r = requests.post(url, json=payload, timeout=15)
