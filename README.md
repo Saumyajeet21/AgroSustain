@@ -317,6 +317,3 @@ Developed as a Minor Project — **Department of CSE(AIML)**
 
 
 
-<div align="center">
-<i>Built for the future of Smart Agriculture 🌾</i>
-</div>
