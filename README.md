@@ -10,7 +10,7 @@
 
 **An AI-driven agricultural platform empowering Indian farmers with data-driven, climate-resilient decisions.**
 
-*Aligned with **UN SDG 2** (Zero Hunger) · **SDG 13** (Climate Action)*
+*Aligned with **SDG 13** (Climate Action)*
 
 </div>
 
