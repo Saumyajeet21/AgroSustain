@@ -21,5 +21,5 @@ torchvision==0.18.0
 opencv-python==4.9.0.80
 pillow==10.3.0
 
-# --- LLM Integration (Google Gemini) ---
-google-genai>=1.72.0       # New Google Gen AI SDK — supports Gemini 2.5 Flash
+# --- LLM Integration (Groq) ---
+groq>=0.9.0                # Groq Cloud SDK — supports Llama 3.3 70B / Mixtral etc.

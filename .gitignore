@@ -6,8 +6,12 @@
 # SECRETS & ENVIRONMENT VARIABLES  ← NEVER COMMIT
 # ──────────────────────────────────────────────
 .env
-.env.*
-!.env.example          # allow the example template
+.env.local
+.env.production
+.env.staging
+# Allow the example template (must come after the deny rules)
+!.env.example
+!**/.env.example
 
 # ──────────────────────────────────────────────
 # PYTHON

@@ -54,9 +54,9 @@ app.add_middleware(
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# ── Gemini advice cache (plant+condition → advice text) ───────────────────────
+# ── Groq advice cache (plant+condition → advice text) ────────────────────────
 # Prevents redundant API calls for the same diagnosis (e.g. same disease seen twice).
-_GEMINI_ADVICE_CACHE: dict[str, str] = {}
+_GROQ_ADVICE_CACHE: dict[str, str] = {}
 
 # ── Static healthy-plant responses (no API call needed) ───────────────────────
 _HEALTHY_TIPS = (
@@ -226,11 +226,13 @@ def calculate_economics_route(body: EconomicsRequest):
 @app.post("/api/disease/diagnose", tags=["Disease"])
 async def diagnose_disease(file: UploadFile = File(...)):
     """
-    Full two-stage vision pipeline:
-    1. YOLO detects and crops leaf regions
-    2. ResNet50 classifies each leaf for disease
-    3. Gemini 2.5 Flash generates natural language treatment advice
-    Returns annotated image + diagnosis + Gemini advice
+    4-stage Plant Doctor pipeline:
+    Stage A │ YOLO   — detects plant regions (leaf / stem / root / whole plant)
+    Stage B │ Groq Vision — identifies crop + disease for ANY image (universal)
+    Stage C │ ResNet50   — precise disease classification for known crops
+    Stage D │ Groq LLM   — generates natural-language treatment advice
+
+    Works for wheat, rice, and any crop even if not in ResNet50 training data.
     """
     # Save uploaded image
     job_id    = str(uuid.uuid4())[:8]
@@ -259,69 +261,201 @@ async def diagnose_disease(file: UploadFile = File(...)):
     if not classifications:
         raise HTTPException(status_code=500, detail="No classifications produced")
 
-    # Use the first (highest-confidence) leaf result as primary
-    primary = classifications[0]
-
-    # ── Stage C: Gemini Treatment Advice ──────────────────────────────────────
-    gemini_advice = ""
+    # Use the first (highest-confidence) region result as primary for ResNet
+    # ALSO run ResNet on the full input image (often gives higher confidence than small crops)
+    resnet_primary = classifications[0] if classifications else {"success": False}
     try:
-        if primary["success"]:
-            plant     = primary.get("plant",    "Unknown plant")
-            condition = primary.get("condition","Unknown condition")
-            is_healthy = primary.get("is_healthy", False)
-            conf      = primary.get("confidence", 0)
-
-            # ── Healthy plants: use static response, no API call ──────────────
-            if is_healthy:
-                gemini_advice = _HEALTHY_TIPS
-
-            else:
-                # ── Diseased plants: check cache first ────────────────────────
-                cache_key = f"{plant.lower()}::{condition.lower()}"
-                if cache_key in _GEMINI_ADVICE_CACHE:
-                    print(f"[Gemini Cache HIT] {cache_key}")
-                    gemini_advice = _GEMINI_ADVICE_CACHE[cache_key]
-                else:
-                    print(f"[Gemini Cache MISS] Calling API for: {cache_key}")
-                    from google import genai as genai_new
-                    client = genai_new.Client(api_key=os.getenv("GEMINI_API_KEY"))
-                    prompt = (
-                        f"A {plant} plant has been diagnosed with {condition} "
-                        f"(confidence: {conf:.0f}%). "
-                        "Give the farmer: 1) What this disease is, "
-                        "2) Immediate actions, "
-                        "3) Recommended treatment. "
-                        "Be concise, practical, under 150 words."
-                    )
-                    try:
-                        response = client.models.generate_content(
-                            model="gemini-2.5-flash",
-                            contents=prompt,
-                        )
-                    except Exception as fallback_e:
-                        print(f"Gemini 2.5 Flash failed, falling back to gemini-flash-latest: {fallback_e}")
-                        response = client.models.generate_content(
-                            model="gemini-flash-latest",
-                            contents=prompt,
-                        )
-                    gemini_advice = response.text
-                    # Store in cache for future identical diagnoses
-                    _GEMINI_ADVICE_CACHE[cache_key] = gemini_advice
+        full_cls = classify_disease(str(img_path))
+        if full_cls.get("success") and full_cls.get("confidence", 0) > resnet_primary.get("confidence", 0):
+            print(f"[ResNet] Full-image result better ({full_cls['confidence']:.1f}% vs "
+                  f"{resnet_primary.get('confidence', 0):.1f}%) — using full-image classification")
+            resnet_primary = full_cls
         else:
-            gemini_advice = "Could not classify the plant. Please upload a clearer image of the leaf."
+            print(f"[ResNet] Crop result used ({resnet_primary.get('confidence', 0):.1f}%)")
+    except Exception as re:
+        print(f"[ResNet] Full-image classification error: {re}")
+
+    # ── Stage B: Groq Vision — universal crop + disease identification ─────────
+    # Works for ANY crop/plant part including wheat, rice, stems, roots.
+    # Runs independently of ResNet50 — does not require crop to be in training data.
+    vision_result = {"success": False, "crop": "Unknown", "disease": "Unknown",
+                     "is_healthy": False, "symptoms": "", "part": "Unknown",
+                     "severity": "Unknown", "confidence": "Low"}
+    try:
+        from ml.vision_analyzer import analyze_plant_image
+        print(f"[Stage B] Running Groq Vision on: {img_path}")
+        vision_result = analyze_plant_image(str(img_path), groq_api_key=os.getenv("GROQ_API_KEY"))
+        if vision_result.get("success"):
+            print(f"[Vision] Crop={vision_result['crop']} | Part={vision_result['part']} | "
+                  f"Disease={vision_result['disease']} | Confidence={vision_result['confidence']}")
+        else:
+            print(f"[Vision] Failed: {vision_result.get('error', 'unknown')}")
+    except Exception as ve:
+        print(f"[Stage B] Groq Vision error: {ve}")
+
+    # ── Stage C: Merge ResNet + Vision results ────────────────────────────────
+    # THREE signals guide the decision:
+    #   1. crops_agree       → both models agree → use ResNet for precise disease label
+    #   2. yolo_found_regions → YOLO found actual plant parts (not full-image fallback)
+    #                           ResNet was trained on plant-part crops → more reliable here
+    #   3. resnet_in_domain  → ResNet was specifically trained on this crop type
+    #
+    # WHY this fixes Apple vs Mango:
+    #   Apple image  → YOLO finds 3 leaf regions (not fallback)
+    #                  ResNet correctly identifies Apple (domain crop)
+    #                  Vision wrongly says Mango (non-domain) → ResNet wins ✓
+    #   Mango image  → YOLO finds nothing → uses full-image fallback
+    #                  ResNet wrongly says Strawberry (domain)
+    #                  Vision correctly says Mango (non-domain) → Vision wins ✓
+    resnet_conf  = resnet_primary.get("confidence", 0) if resnet_primary.get("success") else 0
+    resnet_crop  = resnet_primary.get("plant", "").lower() if resnet_primary.get("success") else ""
+    vision_crop  = vision_result.get("crop", "Unknown").lower()
+    vision_ok    = vision_result.get("success", False)
+
+    # Crops ResNet was specifically trained on (PlantVillage)
+    _RESNET_DOMAIN = {
+        "apple", "blueberry", "cherry", "corn", "maize", "grape", "orange",
+        "peach", "pepper", "potato", "raspberry", "soybean", "squash",
+        "strawberry", "tomato",
+    }
+
+    def _crops_match(a: str, b: str) -> bool:
+        """True if either crop name contains the other (handles partial matches)."""
+        a, b = a.strip().lower(), b.strip().lower()
+        return bool(a and b and (a in b or b in a))
+
+    crops_agree        = _crops_match(resnet_crop, vision_crop)
+    resnet_in_domain   = any(_crops_match(resnet_crop, d) for d in _RESNET_DOMAIN)
+    vision_in_domain   = any(_crops_match(vision_crop, d) for d in _RESNET_DOMAIN)
+    yolo_found_regions = not detection.get("used_fallback", True)
+
+    # ResNet wins when:
+    #  Case 1: Both models agree on crop (ResNet gives precise disease label)
+    #  Case 2: YOLO found real plant regions + ResNet confident on domain crop
+    #          + Vision predicts non-domain crop (Vision confused by fruit/hand context)
+    #  Case 3: Vision completely failed (ResNet is only signal)
+    use_resnet = (
+        resnet_primary.get("success") and resnet_conf >= 50.0
+        and resnet_in_domain
+        and (
+            crops_agree                                          # Case 1: both agree
+            or not vision_ok                                     # Case 3: vision failed
+            or (yolo_found_regions and not vision_in_domain)    # Case 2: YOLO found leaves, Vision sees non-domain crop
+        )
+    )
+
+    if use_resnet:
+        final_plant     = resnet_primary["plant"]
+        final_condition = resnet_primary["condition"]
+        final_healthy   = resnet_primary["is_healthy"]
+        final_conf      = resnet_conf
+        diagnosis_source = "resnet50"
+    elif vision_ok:
+        final_plant     = vision_result["crop"]
+        final_condition = vision_result["disease"] if not vision_result["is_healthy"] else "Healthy"
+        final_healthy   = vision_result["is_healthy"]
+        final_conf      = {"High": 85.0, "Medium": 65.0, "Low": 40.0}.get(vision_result["confidence"], 50.0)
+        diagnosis_source = "groq_vision"
+    else:
+        final_plant     = "Unknown"
+        final_condition = "Unknown"
+        final_healthy   = False
+        final_conf      = 0.0
+        diagnosis_source = "none"
+
+    print(f"[Stage C] yolo_regions={yolo_found_regions} | crops_agree={crops_agree} | "
+          f"resnet_domain={resnet_in_domain} | vision_domain={vision_in_domain} | "
+          f"resnet_conf={resnet_conf:.1f}% | use_resnet={use_resnet}")
+
+    # ── Build merged diagnosis object ─────────────────────────────────────────
+    merged_diagnosis = {
+        "success":          True,
+        "plant":            final_plant,
+        "condition":        final_condition,
+        "is_healthy":       final_healthy,
+        "confidence":       final_conf,
+        "diagnosis_source": diagnosis_source,
+        # Vision extras
+        "plant_part":       vision_result.get("part", detection.get("detected_parts", ["Unknown"])[0]),
+        "symptoms":         vision_result.get("symptoms", ""),
+        "severity":         vision_result.get("severity", "Unknown"),
+        # ResNet extras (may be empty if vision was used)
+        "resnet_disease":   resnet_primary.get("disease", "") if resnet_primary.get("success") else "",
+        "resnet_confidence": resnet_conf,
+        "top3":             resnet_primary.get("top3", []),
+    }
+
+    # ── Stage D: Groq LLM Treatment Advice ───────────────────────────────────
+    ai_advice = ""
+    try:
+        if final_plant.lower() in ("not a plant image", "unknown") and not vision_ok:
+            ai_advice = "Could not identify a plant in this image. Please upload a clear photo of a plant."
+
+        elif final_healthy:
+            ai_advice = _HEALTHY_TIPS
+
+        else:
+            cache_key = f"{final_plant.lower()}::{final_condition.lower()}"
+            if cache_key in _GROQ_ADVICE_CACHE:
+                print(f"[Groq Cache HIT] {cache_key}")
+                ai_advice = _GROQ_ADVICE_CACHE[cache_key]
+            else:
+                print(f"[Groq Cache MISS] Calling Groq API for: {cache_key}")
+                from groq import Groq
+                groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+                # Build a rich prompt using both vision and ResNet info
+                symptoms_text = vision_result.get("symptoms", "")
+                severity_text = vision_result.get("severity", "")
+                part_text     = vision_result.get("part", "")
+
+                prompt = (
+                    f"A {final_plant} plant has been diagnosed with '{final_condition}' "
+                    f"(confidence: {final_conf:.0f}%). "
+                )
+                if symptoms_text:
+                    prompt += f"Visible symptoms: {symptoms_text}. "
+                if severity_text and severity_text != "None":
+                    prompt += f"Severity: {severity_text}. "
+                if part_text:
+                    prompt += f"Affected part: {part_text}. "
+                prompt += (
+                    "Give the Indian farmer: "
+                    "1) What this disease is, "
+                    "2) Immediate actions to take today, "
+                    "3) Recommended treatment (include common Indian pesticide/fungicide names). "
+                    "Be concise, practical, under 200 words."
+                )
+
+                chat_completion = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=350,
+                )
+                ai_advice = chat_completion.choices[0].message.content
+                _GROQ_ADVICE_CACHE[cache_key] = ai_advice
 
     except Exception as e:
-        gemini_advice = f"AI advice unavailable: {str(e)}"
+        ai_advice = f"AI advice unavailable: {str(e)}"
 
     # ── Build Response ────────────────────────────────────────────────────────
     return {
-        "success":          True,
-        "job_id":           job_id,
-        "num_leaves_found": detection["num_leaves"],
-        "used_fallback":    detection["used_fallback"],
-        "diagnosis":        primary if primary["success"] else {"error": "Classification failed"},
-        "all_leaves":       classifications,
-        "gemini_advice":    gemini_advice,
+        "success":             True,
+        "job_id":              job_id,
+        "num_leaves_found":    detection["num_leaves"],
+        "used_fallback":       detection["used_fallback"],
+        "detected_parts":      detection.get("detected_parts", []),
+        "diagnosis":           merged_diagnosis,
+        "vision_analysis":     {
+            "crop":       vision_result.get("crop"),
+            "part":       vision_result.get("part"),
+            "disease":    vision_result.get("disease"),
+            "symptoms":   vision_result.get("symptoms"),
+            "severity":   vision_result.get("severity"),
+            "confidence": vision_result.get("confidence"),
+        },
+        "all_leaves":          classifications,
+        "gemini_advice":       ai_advice,   # key kept for frontend compatibility
         "annotated_image_url": f"/api/disease/result/{job_id}/annotated",
     }
 
@@ -335,16 +469,15 @@ def get_annotated_image(job_id: str):
     return FileResponse(str(img_path), media_type="image/jpeg")
 
 
-# ── ROUTE 5: Gemini Agriculture Chatbot ───────────────────────────────────
+# ── ROUTE 5: AgroBot Chatbot (powered by Groq) ────────────────────────────
 @app.post("/api/chat", tags=["Chatbot"])
-async def chat_with_gemini(body: ChatRequest):
+async def chat_with_groq(body: ChatRequest):
     """
-    Conversational AI chatbot powered by Google Gemini 2.5 Flash.
+    Conversational AI chatbot powered by Groq (Llama 3.3 70B Versatile).
     Maintains conversation history for multi-turn dialogue.
     Specialized as an agricultural advisor.
     """
-    from google import genai as genai_new
-    from google.genai import types as genai_types
+    from groq import Groq
 
     # ── Guard: reject trivially short or empty messages ───────────────────────
     if not body.message or len(body.message.strip()) < 3:
@@ -355,7 +488,7 @@ async def chat_with_gemini(body: ChatRequest):
         }
 
     try:
-        client = genai_new.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         system_instruction = (
             "You are AgroBot, an expert agricultural advisor for Indian farmers. "
@@ -367,38 +500,25 @@ async def chat_with_gemini(body: ChatRequest):
             "If a question is unrelated to agriculture, gently redirect to farming topics."
         )
 
-        # Build contents list from history + new message
-        contents = []
+        # Build messages list from history + new user message
+        # Groq uses the OpenAI-compatible format: [{"role": ..., "content": ...}]
+        messages = [{"role": "system", "content": system_instruction}]
         for h in body.history:
             role = h.get("role", "user")
-            if role == "assistant":
-                role = "model"
-            text = h.get("parts", [{}])[0].get("text", "") if h.get("parts") else ""
+            if role == "model":          # Gemini used "model"; Groq uses "assistant"
+                role = "assistant"
+            text = h.get("parts", [{}])[0].get("text", "") if h.get("parts") else h.get("content", "")
             if text:
-                contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=text)]))
+                messages.append({"role": role, "content": text})
         # Append the new user message
-        contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=body.message)]))
+        messages.append({"role": "user", "content": body.message})
 
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=contents,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    max_output_tokens=512,
-                ),
-            )
-        except Exception as fallback_e:
-            print(f"Gemini 2.5 Flash failed, falling back to gemini-flash-latest: {fallback_e}")
-            response = client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=contents,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    max_output_tokens=512,
-                ),
-            )
-        reply = response.text
+        chat_completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            max_tokens=512,
+        )
+        reply = chat_completion.choices[0].message.content
 
         # Log to Supabase
         log_chat_message(body.session_id, "user", body.message)
@@ -429,3 +549,4 @@ if __name__ == "__main__":
     host = os.getenv("API_HOST", "127.0.0.1")
     port = int(os.getenv("API_PORT", 8000))
     uvicorn.run("main:app", host=host, port=port, reload=True)
+
