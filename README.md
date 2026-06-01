@@ -311,17 +311,11 @@ The dashboard uses crop profiles based on Indian agricultural averages:
 
 ## 👨‍💻 Authors
 
-Developed as a Minor Project — **Department of Computer Science & Engineering**
+Developed as a Minor Project — **Department of CSE(AIML)**
 
 - **Saumyajeet** — [@Saumyajeet21](https://github.com/Saumyajeet21)
 
----
 
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
 
 <div align="center">
 <i>Built for the future of Smart Agriculture 🌾</i>
