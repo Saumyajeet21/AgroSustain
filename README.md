@@ -1,336 +1,147 @@
-# 🌱 AgroSustain — AI-Powered Smart Farming Platform
+# 🌱 AgroSustain
 
-<div align="center">
-
-![AgroSustain Banner](https://img.shields.io/badge/AgroSustain-Smart%20Farming-38bd6c?style=for-the-badge&logo=leaf&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
-
-**An AI-driven agricultural platform empowering Indian farmers with data-driven, climate-resilient decisions.**
-
-*Aligned with **UN SDG 2** (Zero Hunger) · **SDG 13** (Climate Action)*
-
-</div>
+> AI-powered smart farming platform for Indian farmers — crop recommendations, plant disease diagnosis, and economic planning.
 
 ---
 
-## 📋 Table of Contents
+## What it does
 
-- [Overview](#-overview)
-- [Key Features](#-key-features)
-- [Tech Stack](#-tech-stack)
-- [AI Models & Pipeline](#-ai-models--pipeline)
-- [Project Structure](#-project-structure)
-- [Getting Started](#-getting-started)
-- [Environment Variables](#-environment-variables)
-- [API Reference](#-api-reference)
-- [Economic Dashboard](#-economic-dashboard)
+AgroSustain helps farmers make better decisions using AI and real-time data — no hardware or IoT sensors needed.
 
----
-
-## 🌾 Overview
-
-AgroSustain is a full-stack web application that helps Indian farmers make smarter agricultural decisions by combining:
-
-- **Real-time environmental data** fetched automatically from GPS coordinates (no IoT hardware needed)
-- **Machine learning** for crop recommendation (XGBoost) and plant disease diagnosis (YOLOv8 + ResNet50)
-- **Groq Vision AI** (Llama 4 Scout) for universal crop identification — works on wheat, rice, mango, and any crop even if not in the training dataset
-- **Groq LLM** (Llama 3.3 70B) for conversational treatment advice and farming chatbot
-
-> **Hardware-Free**: Operates 100% in software by leveraging geospatial and meteorological APIs — no physical IoT sensors required.
+| Feature | Description |
+|---------|-------------|
+| 🌾 **Crop Advisor** | Recommends the best crop based on live weather + soil data from your GPS location |
+| 🔬 **Plant Doctor** | Upload any plant photo — AI diagnoses disease and prescribes treatment |
+| 📊 **Economics** | Projects yield, investment, revenue, and ROI for any crop and farm size |
+| 🤖 **AgroBot** | Conversational AI chatbot for farming queries (Hindi + English) |
 
 ---
 
-## ✨ Key Features
+## Tech Stack
 
-### 1. 🌿 Smart Crop Advisor
-- Auto-fetches live weather (temperature, humidity, rainfall) and soil data (pH, NPK, bulk density) from the user's GPS location
-- Runs the environmental parameters through a trained **XGBoost classifier** to recommend the optimal crop
-- Shows confidence scores and alternative crop suggestions
-- Supports 22 major Indian crops
+**Frontend** — React 18, Vite, Recharts, Lucide Icons
 
-### 2. 🔬 AI Plant Doctor (4-Stage Vision Pipeline)
-- Upload any photo of a plant — leaf, stem, root, fruit, or whole plant
-- **Stage A**: YOLOv8 detects and crops all plant regions with bounding boxes
-- **Stage B**: Groq Vision (Llama 4 Scout) universally identifies the crop and disease — works even for wheat, rice, mango, orange not in the training data
-- **Stage C**: ResNet50 provides precise disease classification for its 38 known classes (PlantVillage dataset)
-- **Stage D**: Groq LLM (Llama 3.3 70B) generates actionable treatment advice with Indian pesticide recommendations
-- Smart arbitration: uses YOLO region detection to decide whether to trust ResNet or Groq Vision
+**Backend** — Python, FastAPI, Supabase (PostgreSQL)
 
-### 3. 📊 Economic Dashboard
-- Select any crop and enter your farm area (in hectares)
-- Calculates projected yield, total investment, gross revenue, net profit, ROI, and profit margin
-- Based on Indian agricultural averages (ICAR / Ministry of Agriculture data)
-- Interactive bar chart and donut chart breakdowns (Recharts)
+**AI Models**
+- XGBoost — crop recommendation from soil + weather data
+- YOLOv8 — detects plant regions (leaf, stem, root, fruit) in photos
+- ResNet50 — classifies 38 plant diseases (PlantVillage dataset)
+- Groq Vision (Llama 4 Scout) — identifies any crop universally, including wheat, rice, mango
+- Groq LLM (Llama 3.3 70B) — treatment advice + chatbot
 
-### 4. 🤖 AgroBot Chatbot
-- Conversational AI powered by Groq (Llama 3.3 70B Versatile)
-- Answers farming questions, pest management queries, market advice
-- Multilingual support (Hindi/English toggle)
-- Session-based conversation history
-
-### 5. 🌐 Live Environment Data (Hardware Bypass)
-- **Weather**: OpenWeatherMap / Open-Meteo APIs
-- **Soil**: ISRIC SoilGrids REST API (pH, organic carbon, bulk density, sand/clay/silt)
-- **Macronutrients**: NASA POWER API estimates
+**APIs** — OpenWeatherMap, ISRIC SoilGrids, NASA POWER
 
 ---
 
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | React 18, Vite, Vanilla CSS, Recharts, Lucide Icons |
-| **Backend** | Python 3.11, FastAPI, Uvicorn |
-| **Auth & DB** | Supabase (PostgreSQL) |
-| **ML — Crop** | XGBoost, scikit-learn |
-| **ML — Vision** | YOLOv8n (Ultralytics), ResNet50 (PyTorch/torchvision) |
-| **AI — Vision** | Groq Vision API (meta-llama/llama-4-scout-17b-16e-instruct) |
-| **AI — LLM** | Groq API (llama-3.3-70b-versatile) |
-| **Image Processing** | OpenCV (cv2), Pillow |
-| **Weather APIs** | OpenWeatherMap, Open-Meteo |
-| **Soil APIs** | ISRIC SoilGrids, NASA POWER |
-| **i18n** | Custom React i18n (English + Hindi) |
-
----
-
-## 🧠 AI Models & Pipeline
-
-### Model 1: Crop Predictor
+## Plant Doctor Pipeline
 
 ```
-Input: N, P, K, pH, Rainfall, Temperature, Humidity
-  ↓
-XGBoost Classifier (trained on Indian crop dataset)
-  ↓
-Output: Recommended crop + confidence + top alternatives
-```
-
-- **Algorithm**: XGBoost (Extreme Gradient Boosting)
-- **Features**: 7 environmental parameters
-- **Classes**: 22 Indian crops (Rice, Maize, Chickpea, Mango, Cotton, etc.)
-- **Training data**: Custom dataset mapping NPK + climate → optimal crop
-
-### Model 2: Plant Disease Diagnosis (4-Stage Pipeline)
-
-```
-Upload Image
-  ↓
-[Stage A] YOLOv8n  →  Detect & crop plant regions (leaf/stem/root/fruit)
-  ↓
-[Stage B] Groq Vision (Llama 4 Scout)  →  Universal crop & disease ID
-  ↓
-[Stage C] ResNet50  →  Precise disease classification (38 PlantVillage classes)
-       Smart arbitration: picks best result based on YOLO regions + crop domain
-  ↓
-[Stage D] Groq LLM (Llama 3.3 70B)  →  Treatment advice with Indian context
-  ↓
-Output: Annotated image + diagnosis + AI treatment plan
-```
-
-**PlantVillage Classes (ResNet50)**: Apple, Blueberry, Cherry, Corn, Grape, Orange, Peach, Bell Pepper, Potato, Raspberry, Soybean, Squash, Strawberry, Tomato — 38 diseases total.
-
-**Groq Vision handles**: Wheat, Rice, Mango, Sugarcane, Cotton, Chickpea, Banana, and any crop from any angle.
-
-**Smart Arbitration Logic**:
-- If YOLO found leaf regions + ResNet is confident + both predict domain crops → ResNet wins (precise)
-- If YOLO fell back to full image + Vision sees non-domain crop → Groq Vision wins (universal)
-- Result cached per disease for faster subsequent requests
-
-### Model 3: AgroBot (Conversational)
-
-- **Model**: Groq `llama-3.3-70b-versatile`
-- Session-based with conversation history
-- Context-aware farming Q&A
-
----
-
-## 📁 Project Structure
-
-```
-AgroSustain/
-├── backend/
-│   ├── main.py                  # FastAPI app — all routes
-│   ├── requirements.txt         # Python dependencies
-│   ├── .env.example             # Environment variable template
-│   ├── setup_tables.sql         # Supabase schema
-│   ├── ml/
-│   │   ├── crop_predictor.py    # XGBoost inference
-│   │   ├── disease_classifier.py# ResNet50 inference
-│   │   ├── leaf_detector.py     # YOLOv8 plant region detection
-│   │   ├── vision_analyzer.py   # Groq Vision (Llama 4 Scout) wrapper
-│   │   ├── economics.py         # Economic calculations
-│   │   ├── download_datasets.py # Indian crop dataset downloader (Kaggle)
-│   │   ├── train_resnet50.py    # ResNet50 training script
-│   │   └── train_yolo.py        # YOLOv8 training script
-│   ├── models/
-│   │   ├── disease_classes.json # ResNet50 class labels
-│   │   └── *.pth / *.pt         # Trained weights (gitignored — download separately)
-│   └── utils/
-├── frontend/
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Landing.jsx       # Home page
-│   │   │   ├── CropPredictor.jsx # Smart crop advisor
-│   │   │   ├── PlantDoctor.jsx   # Disease diagnosis UI
-│   │   │   ├── Economics.jsx     # Economic dashboard
-│   │   │   ├── Chatbot.jsx       # AgroBot
-│   │   │   └── Auth.jsx          # Login / Signup
-│   │   ├── App.jsx               # Router + layout
-│   │   ├── api.js                # Axios API client
-│   │   ├── i18n.jsx              # Multilingual strings
-│   │   └── index.css             # Global design system
-│   ├── package.json
-│   └── vite.config.js
-├── datasets/                    # Training data (gitignored)
-├── .gitignore
-└── README.md
+📷 Upload image
+     ↓
+[YOLO]  →  Detect plant regions with bounding boxes
+     ↓
+[Groq Vision]  →  Identify crop + disease (works for ANY crop)
+     ↓
+[ResNet50]  →  Precise disease classification for known crops
+     ↓
+[Groq LLM]  →  Treatment advice with Indian pesticide names
+     ↓
+✅  Annotated image + diagnosis + treatment plan
 ```
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
-
 - Python 3.11+
 - Node.js 18+
-- A [Groq](https://console.groq.com) account (free tier works)
-- A [Supabase](https://supabase.com) project
-- API keys for OpenWeatherMap or Open-Meteo (free)
+- [Groq API key](https://console.groq.com) (free)
+- [Supabase](https://supabase.com) project
 
-### 1. Clone the Repository
+### Backend
 
 ```bash
 git clone https://github.com/Saumyajeet21/AgroSustain.git
 cd AgroSustain
-```
 
-### 2. Backend Setup
-
-```bash
-# Create and activate virtual environment
 python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Linux/Mac
+venv\Scripts\activate
 
-# Install dependencies
 pip install -r backend/requirements.txt
 
-# Copy environment template and fill in your API keys
 copy backend\.env.example backend\.env
+# Fill in your API keys in backend/.env
+
+uvicorn backend.main:app --reload --port 8000
 ```
 
-Edit `backend/.env` with your API keys (see [Environment Variables](#-environment-variables)).
-
-```bash
-# Start the backend server
-uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-### 3. Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
 npm install
-
-# Create frontend env file
-echo VITE_API_BASE_URL=http://127.0.0.1:8000 > .env
-
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser.
+Open **http://localhost:5173**
 
-### 4. Download Trained Model Weights
+---
 
-The model weights are not included in the repository (too large). To get them:
+## Environment Variables
 
-**Option A — Use Groq Vision only** (works immediately without any local models):
-- The system falls back to Groq Vision for all detections if no local model is found.
+Copy `backend/.env.example` to `backend/.env` and set:
 
-**Option B — Train locally**:
-```bash
-# Download Indian crop datasets (requires Kaggle API token)
-python backend/ml/download_datasets.py
-
-# Train ResNet50 disease classifier
-python backend/ml/train_resnet50.py
-
-# Train YOLOv8 plant detector (optional, falls back to pretrained)
-python backend/ml/train_yolo.py
+```
+GROQ_API_KEY=           # https://console.groq.com
+SUPABASE_URL=           # your supabase project URL
+SUPABASE_KEY=           # supabase anon key
+OPENWEATHER_API_KEY=    # https://openweathermap.org (free tier)
 ```
 
 ---
 
-## 🔑 Environment Variables
+## Project Structure
 
-Copy `backend/.env.example` to `backend/.env` and fill in:
-
-```env
-# ── Groq AI (Required) ──────────────────────────────────────────
-GROQ_API_KEY=your_groq_api_key_here
-# Get free key at: https://console.groq.com
-
-# ── Supabase (Required for Auth) ────────────────────────────────
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your_supabase_anon_key
-
-# ── Weather APIs (at least one required) ────────────────────────
-OPENWEATHER_API_KEY=your_openweathermap_key
-# Free tier: https://openweathermap.org/api
-
-# ── Soil / Environment APIs ─────────────────────────────────────
-# ISRIC SoilGrids: free, no key needed
-# NASA POWER: free, no key needed
+```
+AgroSustain/
+├── backend/
+│   ├── main.py                   # All API routes (FastAPI)
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── ml/
+│       ├── crop_predictor.py     # XGBoost inference
+│       ├── disease_classifier.py # ResNet50 inference
+│       ├── leaf_detector.py      # YOLOv8 region detection
+│       ├── vision_analyzer.py    # Groq Vision wrapper
+│       ├── economics.py          # Financial calculations
+│       ├── train_resnet50.py     # Training script
+│       └── download_datasets.py  # Kaggle dataset downloader
+└── frontend/
+    └── src/
+        ├── pages/
+        │   ├── CropPredictor.jsx
+        │   ├── PlantDoctor.jsx
+        │   ├── Economics.jsx
+        │   └── Chatbot.jsx
+        ├── App.jsx
+        └── api.js
 ```
 
 ---
 
-## 📡 API Reference
+## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/crop/predict` | XGBoost crop recommendation |
-| `POST` | `/api/economics/calculate` | Financial projection for a crop |
-| `POST` | `/api/disease/diagnose` | 4-stage plant disease diagnosis |
-| `GET`  | `/api/disease/result/{job_id}/annotated` | Annotated image result |
-| `GET`  | `/api/environment/live` | Live weather + soil data by GPS |
-| `POST` | `/api/chat` | AgroBot conversational endpoint |
-| `GET`  | `/docs` | Interactive Swagger UI |
-
----
-
-## 📊 Economic Dashboard
-
-The dashboard uses static crop profiles based on Indian agricultural averages:
-
-| Metric | Source |
-|--------|--------|
-| Yield per hectare | ICAR + Ministry of Agriculture averages |
-| Market price (₹/ton) | Approximate APMC / MSP reference prices |
-| Investment per hectare | Estimated seed + fertilizer + labor + irrigation costs |
-
-**Supported crops**: Rice, Maize, Chickpea, Kidney Beans, Pigeon Peas, Mung Bean, Black Gram, Lentil, Pomegranate, Banana, Mango, Grapes, Watermelon, Muskmelon, Apple, Orange, Papaya, Coconut, Cotton, Jute, Coffee (22 crops)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/crop/predict` | POST | Crop recommendation |
+| `/api/disease/diagnose` | POST | Plant disease diagnosis |
+| `/api/economics/calculate` | POST | Financial projection |
+| `/api/environment/live` | GET | Live weather + soil data |
+| `/api/chat` | POST | AgroBot chatbot |
+| `/docs` | GET | Swagger UI |
 
 ---
 
-## 👨‍💻 Authors
-
-Developed as a Minor Project — **Department of Computer Science & Engineering**
-
-- **Saumyajeet** — [@Saumyajeet21](https://github.com/Saumyajeet21)
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-<div align="center">
-<i>Built for the future of Smart Agriculture 🌾</i>
-</div>
+*Built as a Minor Project — Computer Science & Engineering*
